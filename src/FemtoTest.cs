@@ -151,14 +151,15 @@ namespace FemtoTest {
       }
 
       // Internally called to recursively run tests in an assembly, testfixture, test method etc...
-      private void RunInternal(object scope, object instance, object[] arguments, bool RunAll) {
+      private void RunInternal(object scope, object instance, object[] arguments, bool runAll) {
          // Assembly?
          var a = scope as Assembly;
          if (a != null) {
             StartTest(a, null);
-            RunAll = RunAll || !a.HasActive();
-            foreach (var type in a.GetTypes().Where(i => i.IsTestFixture() && (RunAll || i.HasActive())))
-               RunInternal(type, null, null, RunAll);
+            runAll = runAll || !a.HasActive();
+            foreach (var type in a.GetTypes().Where(i => i.IsTestFixture() && (runAll || i.HasActive()))) {
+               RunInternal(type, null, null, runAll);
+            }
             EndTest();
          }
 
@@ -166,8 +167,8 @@ namespace FemtoTest {
          var t = scope as Type;
          if (t != null) {
             if (arguments == null) {
-               bool runAllTestFixturesInstances = RunAll || !t.IsActive();
-               bool runAllTestMethods = RunAll || !t.HasActiveMethods();
+               bool runAllTestFixturesInstances = runAll || !t.IsActive();
+               bool runAllTestMethods = runAll || !t.HasActiveMethods();
                foreach (TestFixtureAttribute tfa in t.GetCustomAttributes(typeof(TestFixtureAttribute), false).Where(x => runAllTestFixturesInstances || ((TestFixtureAttribute)x).Active))
                   foreach (var args in tfa.GetArguments(t, null)) {
                      RunInternal(t, null, args, runAllTestMethods);
@@ -176,7 +177,7 @@ namespace FemtoTest {
                StartTest(t, arguments);
                var inst = CreateInstance(t, arguments);
                if (inst != null) {
-                  RunInternal(null, inst, null, RunAll);
+                  RunInternal(null, inst, null, runAll);
                }
                EndTest();
             }
@@ -186,11 +187,13 @@ namespace FemtoTest {
          if (instance != null && instance.GetType().IsTestFixture()) {
             var tf = instance;
             if (scope == null) {
-               if (!RunSetupTeardown(instance, true, true))
+               if (!RunSetupTeardown(instance, true, true)) {
                   return;
+               }
 
-               foreach (var m in tf.GetType().GetMethods().Where(x => RunAll || x.IsActive()))
-                  RunInternal(m, instance, null, RunAll);
+               foreach (var m in tf.GetType().GetMethods().Where(x => runAll || x.IsActive())) {
+                  RunInternal(m, instance, null, runAll);
+               }
 
                RunSetupTeardown(instance, false, true);
             }
@@ -198,7 +201,7 @@ namespace FemtoTest {
             var method = scope as MethodInfo;
             if (method != null) {
                if (arguments == null) {
-                  foreach (TestAttribute i in method.GetCustomAttributes(typeof(TestAttribute), false).Where(x => RunAll || ((TestAttribute)x).Active))
+                  foreach (TestAttribute i in method.GetCustomAttributes(typeof(TestAttribute), false).Where(x => runAll || ((TestAttribute)x).Active))
                      foreach (var args in i.GetArguments(method.DeclaringType, instance)) {
                         if (args.Length != method.GetParameters().Length) {
                            writer.WriteWarning("{0} provided in an incorrect number of arguments (expected {1} but found {2}) - skipped", i.GetType().FullName, method.GetParameters().Length, args.Length);
@@ -206,7 +209,7 @@ namespace FemtoTest {
                            continue;
                         }
 
-                        RunInternal(method, instance, args, RunAll);
+                        RunInternal(method, instance, args, runAll);
                      }
                } else {
                   RunTest(method, tf, arguments);
@@ -242,29 +245,27 @@ namespace FemtoTest {
 
       Stopwatch _otherTimes = new Stopwatch();
 
-      [SkipInStackTrace]
-         public bool RunSetupTeardown(object instance, bool setup, bool fixture) {
-            try {
-               foreach (var m in instance.GetType().GetMethods().Where(x => x.GetCustomAttributes(typeof(SetUpTearDownAttributeBase), false)
-                        .Cast<SetUpTearDownAttributeBase>().Any((SetUpTearDownAttributeBase y) => y.ForSetup == setup && y.ForFixture == fixture))) {
-                  _otherTimes.Start();
-                  try {
-                     m.Invoke(instance, null);
-                  } finally {
-                     _otherTimes.Stop();
-                  }
+      [SkipInStackTrace] public bool RunSetupTeardown(object instance, bool setup, bool fixture) {
+         try {
+            foreach (var m in instance.GetType().GetMethods().Where(x => x.GetCustomAttributes(typeof(SetUpTearDownAttributeBase), false)
+                     .Cast<SetUpTearDownAttributeBase>().Any((SetUpTearDownAttributeBase y) => y.ForSetup == setup && y.ForFixture == fixture))) {
+               _otherTimes.Start();
+               try {
+                  m.Invoke(instance, null);
+               } finally {
+                  _otherTimes.Stop();
                }
-               return true;
-            } catch (Exception x) {
-               var invoc = x as TargetInvocationException;
-               if (invoc != null)
-                  x = invoc.InnerException;
-               writer.WriteException(x);
-               Stats.Errors++;
-               return false;
             }
+            return true;
+         } catch (Exception x) {
+            var invoc = x as TargetInvocationException;
+            if (invoc != null)
+               x = invoc.InnerException;
+            writer.WriteException(x);
+            Stats.Errors++;
+            return false;
          }
-
+      }
 
       private void StartTest(object Target, object[] Params) {
          var stats = new Stats() {
@@ -326,8 +327,7 @@ namespace FemtoTest {
 
    // Used to mark utility functions that throw assertion exceptions so the stack trace can be unwound to the actual place the assertion originates
    [AttributeUsage(AttributeTargets.Method | AttributeTargets.Class)]
-      public class SkipInStackTraceAttribute : Attribute {
-      }
+      public class SkipInStackTraceAttribute : Attribute { }
 
    // Base class for setup/teardown attributes
    public class SetUpTearDownAttributeBase : Attribute {
@@ -395,8 +395,9 @@ namespace FemtoTest {
             return string.Format("[{0}]", string.Join(", ", e.Cast<object>().Select(v => FormatValue(v))));
 
          var x = value as Exception;
-         if (x != null)
+         if (x != null) {
             return string.Format("[{0}] {1}", value.GetType().FullName, x.Message);
+         }
 
          return string.Format("[{0}] {1}", value.GetType().FullName, value.ToString());
       }
@@ -424,18 +425,21 @@ namespace FemtoTest {
          return null;
       }
 
-      public static int CountCommonPrefix(string a, string b, bool IgnoreCase) {
+      public static int CountCommonPrefix(string a, string b, bool ignoreCase) {
          int i = 0;
-         while (i < Math.Min(a.Length, b.Length) && (IgnoreCase ? (char.ToUpperInvariant(a[i]) == char.ToUpperInvariant(b[i])) : (a[i] == b[i])))
+         while (i < Math.Min(a.Length, b.Length) && (ignoreCase ? (char.ToUpperInvariant(a[i]) == char.ToUpperInvariant(b[i])) : (a[i] == b[i]))) {
             i++;
+         }
          return i;
       }
 
       public static string GetStringExtract(string str, int offset) {
-         if (offset > 15)
+         if (offset > 15) {
             str = "..." + str.Substring(offset - 10);
-         if (str.Length > 30)
+         }
+         if (str.Length > 30) {
             str = str.Substring(0, 20) + "...";
+         }
          return str;
       }
 
@@ -493,10 +497,10 @@ namespace FemtoTest {
          this.target = target == null ? Console.Out : target;
       }
 
-      public override void StartTest(object Target, object[] Arguments) {
+      public override void StartTest(object target, object[] arguments) {
          if (Verbose) {
-            WriteIndented(string.Format("{0}{1}\n", Utils.FormatTarget(Target), Utils.FormatArguments(Arguments)));
-            _indentDepth += (Target as MethodBase) != null ? 2 : 1;
+            WriteIndented(string.Format("{0}{1}\n", Utils.FormatTarget(target), Utils.FormatArguments(arguments)));
+            _indentDepth += (target as MethodBase) != null ? 2 : 1;
          }
       }
 
@@ -562,15 +566,17 @@ namespace FemtoTest {
       public override void WriteException(Exception x) {
          var assert = x as AssertionException;
          if (assert != null) {
-            WriteIndented(string.Format("\nAssertion failed - {0}\n\n", assert.Message));
+            WriteIndented(string.Format("\nAssertion failed - {0} {1}\n\n", assert.Message, assert.Source));
          } else {
             WriteIndented(string.Format("\nException {0}: {1}\n\n", x.GetType().FullName, x.Message));
          }
 
          StackFrame first = null;
-         foreach (var f in Utils.SimplifyStackTrace(new StackTrace(x, true))) {
+         var stackTrace = new StackTrace(x, true);
+         foreach (var f in Utils.SimplifyStackTrace(stackTrace)) {
+         //foreach (var f in stackTrace.GetFrames()) {
             if (first == null) first = f;
-            WriteIndented(string.Format("  {0} - {1}({2})\n", f.GetMethod().Name, f.GetFileName(), f.GetFileLineNumber()));
+            WriteIndented(string.Format("  {0} - [{1}]({2})\n", f.GetMethod().Name, f.GetFileName(), f.GetFileLineNumber()));
          }
 
          if (first != null) {
